@@ -145,7 +145,7 @@ Use /list <blockchain> to list all wallets being monitored for a specific blockc
 
 Example: /list ETH or just /list
 
-Don't forget to star my Github repo if you find this bot useful! https://github.com/cankatx/crypto-wallet-tracker ⭐️
+⭐️
     """
     context.bot.send_message(chat_id=update.message.chat_id, text=message)
 
