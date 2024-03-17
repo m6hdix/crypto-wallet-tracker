@@ -8,14 +8,25 @@ from web3 import Web3
 # Update the following variables with your own Etherscan and BscScan API keys and Telegram bot token
 ETHERSCAN_API_KEY = 'BEM2UAWK2VZZGXFW659VSSBKEXBEUWDMDC'
 BSCSCAN_API_KEY = '2B91GCNPUG187WSUQDPEGF9U45EC5S811J'
+SOLANA_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjcmVhdGVkQXQiOjE3MTA1ODg0MDcyMDMsImVtYWlsIjoibTZoZGl4eEBnbWFpbC5jb20iLCJhY3Rpb24iOiJ0b2tlbi1hcGkiLCJpYXQiOjE3MTA1ODg0MDd9.fHKAdxee8hJJyunbpDpp7K_FbW0-vq0_mvbsTMSpP5Q'  # Get an API key from https://solana.fm/docs
 TELEGRAM_BOT_TOKEN = '6772044784:AAHrzuwcGqy1tdD8zWyxwhiKQt_2m7sW_Hk'
 TELEGRAM_CHAT_ID = '1847315580'
-print("helo")
+
 def get_wallet_transactions(wallet_address, blockchain):
     if blockchain == 'eth':
         url = f'https://api.etherscan.io/api?module=account&action=txlist&address={wallet_address}&sort=desc&apikey={ETHERSCAN_API_KEY}'
     elif blockchain == 'bnb':
         url = f'https://api.bscscan.com/api?module=account&action=txlist&address={wallet_address}&sort=desc&apikey={BSCSCAN_API_KEY}'
+    elif blockchain == 'sol':
+        url = f'https://public-api.solscan.io/account/transactions?account={wallet_address}&limit=1000'
+        headers = {'X-API-Key': SOLANA_API_KEY}
+        response = requests.get(url, headers=headers)
+        data = json.loads(response.text)
+        result = data.get('result', [])
+        if not isinstance(result, list):
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error fetching transactions for {wallet_address} on Solana blockchain: {data}")
+            return []
+        return result
     else:
         raise ValueError('Invalid blockchain specified')
 
@@ -34,6 +45,8 @@ def send_telegram_notification(message, value, usd_value, tx_hash, blockchain):
         etherscan_link = f'<a href="https://etherscan.io/tx/{tx_hash}">Etherscan</a>'
     elif blockchain == 'bnb':
         etherscan_link = f'<a href="https://bscscan.com/tx/{tx_hash}">BscScan</a>'
+    elif blockchain == 'sol':
+        etherscan_link = f'<a href="https://solscan.io/tx/{tx_hash}">Solana Explorer</a>'
     else:
         raise ValueError('Invalid blockchain specified')
 
@@ -64,12 +77,13 @@ def monitor_wallets():
 
     while True:
         try:
-            # Fetch current ETH and BNB prices in USD from CoinGecko API
-            eth_usd_price_url = 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum%2Cbinancecoin&vs_currencies=usd'
+            # Fetch current ETH, BNB, and SOL prices in USD from CoinGecko API
+            eth_usd_price_url = 'https://api.coingecko.com/api/v3/simple/price?ids=ethereum%2Cbinancecoin%2Csolana&vs_currencies=usd'
             response = requests.get(eth_usd_price_url)
             data = json.loads(response.text)
             eth_usd_price = data['ethereum']['usd']
             bnb_usd_price = data['binancecoin']['usd']
+            sol_usd_price = data['solana']['usd']
 
             # Read from file
             with open(file_path, 'r') as f:
@@ -85,13 +99,13 @@ def monitor_wallets():
                     if tx_hash not in latest_tx_hashes and tx_time > last_run_time:
                         if tx['to'].lower() == wallet_address.lower():
                             value = float(tx['value']) / 10**18 # Convert from wei to ETH or BNB
-                            usd_value = value * (eth_usd_price if blockchain == 'eth' else bnb_usd_price) # Calculate value in USD
+                            usd_value = value * (eth_usd_price if blockchain == 'eth' else bnb_usd_price if blockchain == 'bnb' else sol_usd_price) # Calculate value in USD
                             message = f'🚨 Incoming transaction detected on {wallet_address}'
                             send_telegram_notification(message, value, usd_value, tx['hash'], blockchain)
                             #print(f'\n{message}, Value: {value} {blockchain.upper()}, ${usd_value:.2f}\n')
                         elif tx['from'].lower() == wallet_address.lower():
                             value = float(tx['value']) / 10**18 # Convert from wei to ETH or BNB
-                            usd_value = value * (eth_usd_price if blockchain == 'eth' else bnb_usd_price) # Calculate value in USD
+                            usd_value = value * (eth_usd_price if blockchain == 'eth' else bnb_usd_price if blockchain == 'bnb' else sol_usd_price) # Calculate value in USD
                             message = f'🚨 Outgoing transaction detected on {wallet_address}'
                             send_telegram_notification(message, value, usd_value, tx['hash'], blockchain)
                             #print(f'\n{message}, Value: {value} {blockchain.upper()}, ${usd_value:.2f}\n')
@@ -131,7 +145,7 @@ def remove_wallet(wallet_address, blockchain):
 # Define the command handlers for the Telegram bot
 def start(update, context):
     message = """
-👋 Welcome to the Ethereum and Binance Wallet Monitoring Bot!
+👋 Welcome to the Ethereum, Binance, and Solana Wallet Monitoring Bot!
 
 Use /add <blockchain> <wallet_address> to add a new wallet to monitor.
 
@@ -166,10 +180,14 @@ def add(update, context):
         if not re.match(r'^0x[a-fA-F0-9]{40}$', wallet_address):
             context.bot.send_message(chat_id=update.message.chat_id, text=f"{wallet_address} is not a valid Binance Smart Chain wallet address.")
             return
+    elif blockchain == 'sol':
+        if not re.match(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$', wallet_address):
+            context.bot.send_message(chat_id=update.message.chat_id, text=f"{wallet_address} is not a valid Solana wallet address.")
+            return
     else:
         context.bot.send_message(chat_id=update.message.chat_id, text=f"Invalid blockchain specified: {blockchain}")
         return
-    
+
     add_wallet(wallet_address, blockchain)
     message = f'Added {wallet_address} to the list of watched {blockchain.upper()} wallets.'
     context.bot.send_message(chat_id=update.message.chat_id, text=message)
@@ -190,12 +208,15 @@ def list_wallets(update, context):
     if wallets:
         eth_wallets = []
         bnb_wallets = []
+        sol_wallets = []
         for wallet in wallets:
             blockchain, wallet_address = wallet.split(':')
             if blockchain == 'eth':
                 eth_wallets.append(wallet_address)
             elif blockchain == 'bnb':
                 bnb_wallets.append(wallet_address)
+            elif blockchain == 'sol':
+                sol_wallets.append(wallet_address)
 
         message = "The following wallets are currently being monitored\n"
         message += "\n"
@@ -207,6 +228,11 @@ def list_wallets(update, context):
         if bnb_wallets:
             message += "Binance Coin Wallets:\n"
             for i, wallet in enumerate(bnb_wallets):
+                message += f"{i+1}. {wallet}\n"
+            message += "\n"
+        if sol_wallets:
+            message += "Solana Wallets:\n"
+            for i, wallet in enumerate(sol_wallets):
                 message += f"{i+1}. {wallet}\n"
         context.bot.send_message(chat_id=update.message.chat_id, text=message)
     else:
